@@ -1,0 +1,5 @@
+.venv/
+*.pt
+*.json
+archive/
+*.txt
