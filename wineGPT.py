@@ -1,8 +1,23 @@
+from networkx import reverse_view
 import pandas as pd
 import re
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+from tokenizers import Tokenizer
+from tokenizers.models import BPE
+from tokenizers.trainers import BpeTrainer
+from tokenizers.pre_tokenizers import ByteLevel
+from tokenizers.decoders import ByteLevel as ByteLevelDecoder
+
+# To-Do:
+# Load data and kaggle csv, use wine, vintage, and reverse_view
+# BPE Tokenization
+# PyTorch Architecture
+# Train
+# Evaluate performance/fine tune
+# Chat bot
 
 # Load dataset
 df = pd.read_csv("archive/winemag-data-130k-v2.csv")
@@ -25,6 +40,32 @@ df['training_text'] = (
 
 df['training_text'].to_csv("wine_corpus.txt", index=False, header=False)
 print(f"Sample formatted text:\n{df['training_text'].iloc[0]}")
+
+# Byte Pair Tokenization
+
+# Initialize an empty BPE model
+tokenizer = Tokenizer(BPE(unk_token="<|endoftext|>"))
+
+tokenizer.pre_tokenizer = ByteLevel(add_prefix_space=False)
+tokenizer.decoder = ByteLevelDecoder()
+
+# Configure the trainer
+# Target a vocabulary size of 5,000 tokens for WineGPT
+trainer = BpeTrainer(
+    vocab_size=5000, 
+    special_tokens=["<|endoftext|>"]
+)
+
+# Train on local wine text file
+tokenizer.train(["wine_corpus.txt"], trainer)
+tokenizer.save("wine_gpt_tokenizer.json")
+
+# Tokenizer test
+encoded = tokenizer.encode("Wine: Pinot Noir | Vintage: 2018 <|endoftext|>")
+print(f"\nToken IDs: {encoded.ids}")
+print(f"Decoded Text: {tokenizer.decode(encoded.ids)}")
+
+# PyTorch Model
 
 class CausalSelfAttention(nn.Module):
     def __init__(self, d_model, n_heads, block_size):
