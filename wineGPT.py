@@ -1,5 +1,6 @@
 import pandas as pd
 import re
+import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -214,31 +215,74 @@ DEVICE = 'cuda' if torch.cuda.is_available() else ('mps' if torch.backends.mps.i
 # Vocab Size from tokenizer
 VOCAB_SIZE = tokenizer.get_vocab_size()
 
-# Instantiations
-dataset = WineDataset(df, tokenizer, BLOCK_SIZE)
-dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True)
-
 model = WineGPT(VOCAB_SIZE, D_MODEL, N_HEADS, N_LAYERS, BLOCK_SIZE).to(DEVICE)
 optimizer = torch.optim.AdamW(model.parameters(), lr=LEARNING_RATE)
 
 # Training Loop
-model.train()
-print(f"Training on device: {DEVICE}...")
+# Split the text into Train and Validation dataframes
+df_shuffled = df.sample(frac=1, random_state=33).reset_index(drop=True)
+split_idx = int(len(df_shuffled) * 0.9)
+
+train_df = df_shuffled.iloc[:split_idx]
+val_df = df_shuffled.iloc[split_idx:]
+
+# Instantiate separate datasets and dataloaders
+train_dataset = WineDataset(train_df, tokenizer, BLOCK_SIZE)
+val_dataset = WineDataset(val_df, tokenizer, BLOCK_SIZE)
+
+train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
+val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False)
+
+# Evaluate model performance
+@torch.no_grad()
+def estimate_loss(model, dataloader, eval_iters=50):
+
+    model.eval()
+    losses = []
+    correct_tokens = 0
+    total_tokens = 0
+    
+    for i, (x, y) in enumerate(dataloader): # evaluates over number of iterations, not epochs since we are only doing a few epochs
+        if i >= eval_iters: # stops after eval_iters
+            break
+        x, y = x.to(DEVICE), y.to(DEVICE)
+        logits, loss = model(x, y)
+        losses.append(loss.item())
+        
+    model.train()
+    mean_loss = sum(losses) / len(losses)
+    perplexity = math.exp(mean_loss)
+    
+    return mean_loss, perplexity
+
+# Training Loop
+EPOCHS = 3
+model = WineGPT(VOCAB_SIZE, D_MODEL, N_HEADS, N_LAYERS, BLOCK_SIZE).to(DEVICE)
+optimizer = torch.optim.AdamW(model.parameters(), lr=LEARNING_RATE)
+
+print(f"Beginning training on device: {DEVICE}")
 
 for epoch in range(EPOCHS):
-    for step, (x, y) in enumerate(dataloader):
+    model.train()
+    for step, (x, y) in enumerate(train_loader):
         x, y = x.to(DEVICE), y.to(DEVICE)
         
-        # Forward pass
+        # Forward & Backward passes
         logits, loss = model(x, y)
-        
-        # Backward pass
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
         
-        if step % 100 == 0:
-            print(f"Epoch {epoch} | Step {step} | Loss: {loss.item():.4f}")
+        if step % 200 == 0:
+            print(f"Epoch {epoch} | Step {step} | Train Loss: {loss.item():.4f}")
+            
+    # End of Epoch Evaluation
+    val_loss, val_ppl = estimate_loss(model, val_loader)
+    print("\n" + "="*50)
+    print(f"END OF EPOCH {epoch} PERFORMANCE METRICS:")
+    print(f"Validation Loss: {val_loss:.4f}")
+    print(f"Validation Perplexity:{val_ppl:.2f}")
+    print("="*50 + "\n")
 
 # Save the trained model weights
 model_path = "wine_gpt_model.pt"
